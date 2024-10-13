@@ -1,69 +1,118 @@
 import streamlit as st
-import subprocess
 import os
+import yt_dlp
+import subprocess
 
-def download_audio_from_youtube(url):
-    try:
-        # yt-dlp 명령어를 사용하여 YouTube에서 오디오 추출
-        command = [
-            'yt-dlp',
-            '--extract-audio',
-            '--audio-format', 'mp3',
-            '--output', '%(title)s.%(ext)s',  # 파일 이름 포맷 설정
-            url
-        ]
-        subprocess.run(command, check=True)
+# Streamlit 앱 구성
+st.title('YouTube Downloader & Video Converter')
 
-        # 생성된 파일 이름 가져오기
-        audio_files = [f for f in os.listdir('.') if f.endswith('.mp3')]
-        
-        return audio_files  # MP3 파일 목록 반환
+# 탭 구성
+tab1, tab2 = st.tabs(['YouTube Audio/Video Extractor', 'Video Converter'])
 
-    except Exception as e:
-        st.error(f"An error occurred: {e}")
-        return []
+# 탭 1: YouTube 음원 추출기
+with tab1:
+    # URL 입력
+    url = st.text_input('Enter YouTube URL')
 
-# 음원 파일 목록을 세션 상태로 관리
-if "audio_files" not in st.session_state:
-    st.session_state.audio_files = []
+    # 라디오 버튼으로 오디오 또는 비디오 선택
+    option = st.radio('Select output format', ('Audio (mp3)', 'Video (mp4)'))
 
-st.title("YouTube Audio Downloader")
+    # 다운로드 버튼 생성
+    if st.button('Extract'):
+        if url:
+            # yt-dlp 옵션 설정
+            if option == 'Audio (mp3)':
+                # 오디오 다운로드 옵션
+                ydl_opts = {
+                    'format': 'bestaudio/best',
+                    'outtmpl': '%(title)s.%(ext)s',
+                    'postprocessors': [{
+                        'key': 'FFmpegExtractAudio',
+                        'preferredcodec': 'mp3',
+                        'preferredquality': '192',
+                    }],
+                }
+            elif option == 'Video (mp4)':
+                # 비디오 다운로드 옵션 (코덱 설정: 비디오 H.264, 오디오 AAC)
+                ydl_opts = {
+                    'format': 'bestvideo[height<=1080]+bestaudio[ext=m4a]/mp4',
+                    'outtmpl': '%(title)s.%(ext)s',
+                    'merge_output_format': 'mp4',  # mp4로 병합
+                    'postprocessor_args': [
+                        '-c:v', 'libx264',  # 비디오 코덱을 H.264로 설정
+                        '-c:a', 'aac',      # 오디오 코덱을 AAC로 설정
+                        '-b:a', '192k'      # 오디오 비트레이트 설정
+                    ],
+                }
 
-# 입력된 YouTube URL 저장
-youtube_url = st.text_input("Enter YouTube URL:")
+            # yt-dlp 다운로드 작업 중 스피너 표시
+            with st.spinner('Extracting... Please wait...'):
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
 
-# 음원 다운로드 버튼
-if st.button("Extract Audio"):
-    if youtube_url:
-        st.session_state.audio_files = download_audio_from_youtube(youtube_url)
-        if st.session_state.audio_files:  # 파일이 정상적으로 생성되었는지 확인
-            st.success("Audio downloaded successfully!")
+            # 다운로드한 파일 찾기
+            file_name = max([f for f in os.listdir('.') if f.endswith(('.mp3', '.mp4'))], key=os.path.getctime)
+
+            # 파일 다운로드 버튼을 통해 제공
+            with open(file_name, 'rb') as f:
+                st.download_button(
+                    label="Click to Download",
+                    data=f,
+                    file_name=file_name,
+                    mime="audio/mpeg" if option == 'Audio (mp3)' else "video/mp4"
+                )
+
+            st.success(f'{option} downloaded successfully!')
+            st.balloons()  # 성공적으로 다운로드가 완료되면 풍선 효과
         else:
-            st.error("No audio file found.")
-    else:
-        st.error("Please enter a valid YouTube URL.")
+            st.warning('Please enter a valid YouTube URL.')
 
-# 곡 제목 표시 및 다운로드 버튼 생성
-if st.session_state.audio_files:
-    for audio_file in st.session_state.audio_files:
-        st.markdown(f"**{audio_file}**")  # 곡 제목을 기본 라벨 형태로 표시
+# 탭 2: 비디오 변환기
+with tab2:
+    st.subheader('Change Video Resolution and Bitrate')
 
-        # 다운로드 버튼 생성
-        with open(audio_file, "rb") as f:
-            st.download_button(
-                label=f"Download Audio",
-                data=f,
-                file_name=audio_file,
-                mime="audio/mpeg"
-            )
+    # 비디오 파일 업로드
+    uploaded_file = st.file_uploader("Upload a video file (mp4)", type=['mp4'])
 
-# 페이지가 리랜더링될 때 음원 파일 삭제
-def cleanup_audio_files():
-    for audio_file in st.session_state.audio_files:
-        if os.path.exists(audio_file):
-            os.remove(audio_file)
-    st.session_state.audio_files = []  # 목록 초기화
+    # 해상도 및 비트레이트 입력
+    resolution = st.text_input("Enter resolution (e.g., 1920x1080)", "1920x1080")
+    bitrate = st.text_input("Enter bitrate (e.g., 4000k)", "4000k")
 
-# 페이지가 리랜더링되면 음원 파일 삭제
-if st.session_state.audio_files:
-    cleanup_audio_files()
+    # 변환 버튼 생성
+    if st.button('Convert'):
+        if uploaded_file is not None:
+            # 임시 파일 저장
+            temp_input = 'temp_video.mp4'
+            with open(temp_input, 'wb') as f:
+                f.write(uploaded_file.getbuffer())
+
+            # 출력 파일 이름
+            output_file = f'converted_{resolution}_{bitrate}.mp4'
+
+            # FFmpeg 명령어 구성
+            ffmpeg_command = [
+                'ffmpeg',
+                '-i', temp_input,
+                '-s', resolution,
+                '-b:v', bitrate,
+                '-c:a', 'aac',
+                output_file
+            ]
+
+            # 변환 작업 중 스피너 표시
+            with st.spinner('Converting video... Please wait...'):
+                subprocess.run(ffmpeg_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+            # 변환된 파일 다운로드 버튼
+            with open(output_file, 'rb') as f:
+                st.download_button(
+                    label="Download Converted Video",
+                    data=f,
+                    file_name=output_file,
+                    mime="video/mp4"
+                )
+
+            st.success(f'Video converted to {resolution} at {bitrate}!')
+            st.balloons()  # 성공적으로 변환 완료 시 풍선 효과
+        else:
+            st.warning('Please upload a video file.')
