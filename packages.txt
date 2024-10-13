@@ -1,3 +1,1 @@
-build-essential
-pkg-config
-yt-dlp
+ffmepg
